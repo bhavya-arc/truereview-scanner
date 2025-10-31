@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>TrueReview — Fake Review Quick Check</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:Inter,Arial;margin:18px;background:#f6f8fa;color:#0b1220}
+    .wrap{max-width:900px;margin:0 auto}
+    textarea{width:100%;height:160px;padding:12px;font-size:15px;border-radius:8px;border:1px solid #d7dbe0}
+    button{background:#0b6efd;color:white;padding:10px 16px;border:0;border-radius:8px;cursor:pointer}
+    .score{font-size:28px;font-weight:700;margin-top:8px}
+    .reason{background:#fff;padding:12px;border-radius:8px;border:1px solid #e6e9ee;margin-top:10px}
+    .chip{display:inline-block;padding:6px 8px;background:#eef4ff;border-radius:999px;margin:6px 6px 0 0}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>TrueReview — Quick Fake Check</h1>
+    <p>Paste a review (or list of reviews) below and click <strong>Analyze</strong>. This runs locally in your browser (no upload).</p>
+
+    <textarea id="input" placeholder="Paste review text here..."></textarea>
+    <div style="margin-top:8px;">
+      <button id="analyzeBtn">Analyze</button>
+      <button id="clearBtn" style="margin-left:8px">Clear</button>
+    </div>
+
+    <div id="out" style="margin-top:18px"></div>
+    <div style="margin-top:14px;color:#666;font-size:13px">
+      <strong>Note:</strong> This is a probabilistic heuristic check. It points out suspicious patterns and gives reasons — not a legal judgement.
+    </div>
+  </div>
+
+<script>
+const posWords = ["best","amazing","excellent","perfect","highly recommend","5 star","five star","love it","must buy","awesome"];
+const negWords = ["disappointed","bad","never buy","poor","waste","not recommended"];
+const analyzeBtn = document.getElementById('analyzeBtn');
+const clearBtn = document.getElementById('clearBtn');
+const out = document.getElementById('out');
+
+function tokenize(text){
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean);
+}
+
+function analyzeText(text){
+  const reviews = text.split(/\n{2,}|[\r\n]{2,}/).map(s=>s.trim()).filter(Boolean);
+  const results = reviews.map(r => analyzeSingle(r));
+  const avg = Math.round(results.reduce((s,m)=>s+m.fakeScore,0)/results.length || 0);
+  const combinedReasons = results.flatMap(r=>r.reasons).slice(0,6);
+  return {avgScore:avg, results, combinedReasons};
+}
+
+function analyzeSingle(text){
+  const t = text.trim();
+  const chars = t.length;
+  const tokens = tokenize(t);
+  const words = tokens.length;
+  let score = 0;
+  let reasons = [];
+
+  if(words < 6){
+    score += 18;
+    reasons.push("Very short / generic review");
+  }
+
+  let posCount = posWords.reduce((s,w)=> s + (t.toLowerCase().includes(w)?1:0), 0);
+  if(posCount >= 2){
+    score += Math.min(25, posCount * 10);
+    reasons.push("Multiple overly positive phrases ("+posCount+")");
+  }
+
+  if(/[!]{3,}/.test(t) || /[🙌😂😍👍]{2,}/u.test(t)){
+    score += 8;
+    reasons.push("Over-excitement / emoji-heavy");
+  }
+
+  const capsRatio = (t.replace(/[^A-Z]/g,'').length) / Math.max(1,chars);
+  if(capsRatio > 0.12){
+    score += 8;
+    reasons.push("Text contains many ALL-CAPS characters");
+  }
+
+  const uniq = new Set(tokens);
+  if(uniq.size / Math.max(1, words) < 0.45 && words < 25){
+    score += 7;
+    reasons.push("Repeating or templated language");
+  }
+
+  if(/\d{10,}|@|https?:\/\/\S+/.test(t)){
+    score += 12;
+    reasons.push("Contains contact/URL — often promotional");
+  }
+
+  const posWordHits = tokens.filter(tok => posWords.some(p=>p.includes(tok))).length;
+  if(words > 80 && posWordHits/Math.max(1,words) > 0.06){
+    score += 12;
+    reasons.push("Long text with unusually many praise words");
+  }
+
+  const negCount = negWords.reduce((s,w)=> s + (t.toLowerCase().includes(w)?1:0), 0);
+  if(negCount>0){
+    score = Math.max(0, score - 18);
+    reasons.push("Includes specific criticism (increases credibility)");
+  }
+
+  score = Math.min(100, Math.max(0, score));
+  const verdict = score >= 50 ? "Likely Fake" : (score >= 25 ? "Suspicious" : "Likely Real");
+  return {text:t, fakeScore:score, verdict, reasons: Array.from(new Set(reasons))};
+}
+
+function colorForScore(s){
+  if(s>=70) return "#d43f3a";
+  if(s>=40) return "#f1a10a";
+  return "#2ea44f";
+}
+
+analyzeBtn.onclick = () => {
+  const text = document.getElementById('input').value;
+  if(!text.trim()){ alert("Paste a review first."); return; }
+  out.innerHTML = "<div style='padding:12px;background:#fff;border-radius:10px;border:1px solid #e5e7eb'>Analyzing…</div>";
+  setTimeout(()=>{ 
+    const {avgScore, results, combinedReasons} = analyzeText(text);
+    const color = colorForScore(avgScore);
+    let html = `<div style="background:#fff;padding:14px;border-radius:10px;border:1px solid #e6e9ee">
+      <div class="score" style="color:${color}">Fake Score: ${avgScore}%</div>
+      <div style="margin-top:8px;font-size:15px"><strong>Verdict:</strong> ${avgScore>=50 ? "Likely Fake" : avgScore>=25 ? "Suspicious" : "Likely Real"}</div>
+      <div style="margin-top:10px"><strong>Top reasons:</strong></div>
+      <div style="margin-top:8px">` +
+        combinedReasons.map(r=>`<span class="chip">${r}</span>`).join('') +
+      `</div>
+    </div>`;
+    out.innerHTML = html;
+  }, 220);
+};
+
+clearBtn.onclick = ()=>{ document.getElementById('input').value = ''; out.innerHTML=''; };
+</script>
+</body>
+</html>
